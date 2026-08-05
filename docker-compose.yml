@@ -1,0 +1,13 @@
+# docker-compose.yml — convenience wrapper for pqriscv
+#
+# Build image:   docker compose build
+# Run all tests: docker compose run --rm test
+# Single scheme: docker compose run --rm test make SCHEME=ml-kem-512 run-test
+# Shell:         docker compose run --rm test bash
+
+services:
+  test:
+    build: .
+    working_dir: /workspace
+    # Mount source as read-only so the container uses a fresh build dir
+    # but you can inspect results with:  docker compose run --rm test bash

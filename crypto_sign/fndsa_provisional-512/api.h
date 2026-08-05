@@ -1,0 +1,27 @@
+#include <stddef.h>
+#include <stdint.h>
+
+
+#define CRYPTO_SECRETKEYBYTES    1281
+#define CRYPTO_PUBLICKEYBYTES    897
+#define CRYPTO_BYTES             666
+#define CRYPTO_ALGNAME           "FN-DSA (provisional) 512"
+
+int crypto_sign_keypair(unsigned char *pk, unsigned char *sk);
+int crypto_sign(unsigned char *sm, size_t *smlen,
+	const unsigned char *m, size_t mlen,
+	const unsigned char *sk);
+int crypto_sign_open(unsigned char *m, size_t *mlen,
+	const unsigned char *sm, size_t smlen,
+	const unsigned char *pk);
+
+
+int crypto_sign_signature(uint8_t *sig, size_t *siglen,
+                          const uint8_t *m, size_t mlen,
+                          const uint8_t *ctx, size_t ctxlen,
+                          const uint8_t *sk);
+
+int crypto_sign_verify(const uint8_t *sig, size_t siglen,
+                       const uint8_t *m, size_t mlen,
+                       const uint8_t *ctx, size_t ctxlen,
+                       const uint8_t *pk);

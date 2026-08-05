@@ -1,0 +1,81 @@
+# Dockerfile.esp32
+# Build environment for pqriscv on ESP32 RISC-V targets (C3 and C6).
+#
+# Uses the SAME riscv64-unknown-elf toolchain already in the base Dockerfile —
+# no extra compiler needed.  The only addition is esptool (pip package) for
+# ELF→ESP-image conversion and optional USB flashing.
+#
+# ── Build ─────────────────────────────────────────────────────────────────
+#   docker build -f Dockerfile.esp32 -t pqriscv-esp32 .
+#
+# ── Compile for ESP32-C3 (all schemes) ────────────────────────────────────
+#   docker run --rm pqriscv-esp32 make PLATFORM=esp32c3 all
+#
+# ── Compile one scheme, produce .bin ──────────────────────────────────────
+#   docker run --rm pqriscv-esp32 \
+#     make PLATFORM=esp32c3 SCHEME=ml-kem-512 test bin-test
+#
+# ── Flash from inside Docker (pass USB device through) ────────────────────
+#   docker run --rm --device=/dev/ttyUSB0 pqriscv-esp32 \
+#     make PLATFORM=esp32c3 SCHEME=ml-kem-512 test bin-test flash-test \
+#          FLASH_PORT=/dev/ttyUSB0
+#
+# ── Extract the .bin for flashing on the host ─────────────────────────────
+#   docker run --rm -v "$(pwd)/build-out:/out" pqriscv-esp32 bash -c \
+#     "make PLATFORM=esp32c3 SCHEME=ml-kem-512 test bin-test && \
+#      cp build/ml-kem-512/test.bin /out/"
+#
+# NOTE: The base Dockerfile already produces QEMU builds.  This file extends
+# that environment — you do NOT need to choose one or the other.  Both QEMU
+# and ESP32 builds work in this image.
+# ──────────────────────────────────────────────────────────────────────────
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Toolchain + libs ──────────────────────────────────────────────────────
+# riscv64-unknown-elf-gcc ships with newlib (nano.specs + nosys.specs built-in)
+# qemu-system-misc keeps the QEMU target working in the same image
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc-riscv64-unknown-elf              \
+        binutils-riscv64-unknown-elf         \
+        qemu-system-misc                     \
+        make                                 \
+        python3                              \
+        python3-pip                          \
+        python3-serial                       \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── esptool — elf2image + write_flash ─────────────────────────────────────
+# Ubuntu 24.04 uses PEP 668 (externally-managed env); --break-system-packages
+# is intentional and safe inside this container.
+RUN pip3 install --break-system-packages esptool
+
+# ── Sanity checks ─────────────────────────────────────────────────────────
+RUN riscv64-unknown-elf-gcc --version && \
+    qemu-system-riscv32 --version      && \
+    esptool.py version                 && \
+    riscv64-unknown-elf-gcc --specs=nano.specs -print-multi-lib > /dev/null
+
+# ── Project ───────────────────────────────────────────────────────────────
+WORKDIR /workspace
+COPY . .
+
+# ── Default: build all schemes for ESP32-C3, then ESP32-C6 ───────────────
+CMD ["bash", "-c", "\
+    set -e; \
+    echo; echo '=== ESP32-C3 (RV32IMC) ==='; \
+    for scheme in ml-kem-512 ml-kem-768 ml-kem-1024 ml-dsa-44 ml-dsa-65 ml-dsa-87; do \
+        echo \"  building $scheme...\"; \
+        make --no-print-directory PLATFORM=esp32c3 SCHEME=$scheme test bin-test 2>&1 | tail -3; \
+    done; \
+    echo; echo '=== ESP32-C6 (RV32IMAC) ==='; \
+    for scheme in ml-kem-512 ml-kem-768 ml-kem-1024 ml-dsa-44 ml-dsa-65 ml-dsa-87; do \
+        echo \"  building $scheme...\"; \
+        make --no-print-directory PLATFORM=esp32c6 SCHEME=$scheme test bin-test 2>&1 | tail -3; \
+    done; \
+    echo; echo 'All builds complete.'; \
+    find build -name '*.bin' | sort; \
+"]
