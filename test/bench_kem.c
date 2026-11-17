@@ -46,6 +46,18 @@ static void pf(const char *fmt, ...)
     hal_send_str(_buf);
 }
 
+/* Full 64-bit decimal without %llu (not in newlib-nano, used by the ESP
+ * targets). On RV32 "%lu" + (unsigned long) silently drops the top 32 bits,
+ * i.e. anything above 2^32 cycles (12.3 s at 350 MHz). */
+static const char *u64str(uint64_t v)
+{
+    static char s[21];
+    char *p = s + sizeof(s) - 1;
+    *p = '\0';
+    do { *--p = (char)('0' + (v % 10)); v /= 10; } while (v);
+    return p;
+}
+
 static uint64_t min_u64(uint64_t a, uint64_t b) { return a < b ? a : b; }
 static uint64_t max_u64(uint64_t a, uint64_t b) { return a > b ? a : b; }
 
@@ -106,17 +118,17 @@ int main(void)
         t_de_sum += dt;
     }
 
-    pf("keygen_min: %lu", (unsigned long )t_kg_min);
-    pf("keygen_max: %lu", (unsigned long )t_kg_max);
-    pf("keygen_avg: %lu", (unsigned long )(t_kg_sum / NBENCH));
+    pf("keygen_min: %s", u64str(t_kg_min));
+    pf("keygen_max: %s", u64str(t_kg_max));
+    pf("keygen_avg: %s", u64str((t_kg_sum / NBENCH)));
 
-    pf("enc_min:    %lu", (unsigned long )t_en_min);
-    pf("enc_max:    %lu", (unsigned long ) t_en_max);
-    pf("enc_avg:    %lu", (unsigned long )(t_en_sum / NBENCH));
+    pf("enc_min:    %s", u64str(t_en_min));
+    pf("enc_max:    %s", u64str(t_en_max));
+    pf("enc_avg:    %s", u64str((t_en_sum / NBENCH)));
 
-    pf("dec_min:    %lu", (unsigned long )t_de_min);
-    pf("dec_max:    %lu", (unsigned long )t_de_max);
-    pf("dec_avg:    %lu", (unsigned long )(t_de_sum / NBENCH));
+    pf("dec_min:    %s", u64str(t_de_min));
+    pf("dec_max:    %s", u64str(t_de_max));
+    pf("dec_avg:    %s", u64str((t_de_sum / NBENCH)));
 
     
 

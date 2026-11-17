@@ -76,6 +76,7 @@ pqriscv/
 │   ├── bench_sign.c           # signature timing benchmark
 │   └── test_primitives.c      # SHA-3/SHAKE/SHA-2/DRBG self-tests
 ├── scripts/                   # flash_esp.sh, flash_dabao.sh, bao1x_image.py (sign + UF2),
+│                              # run_dabao.py (flash + run + capture), bench_to_csv.py,
 │                              # monitor.sh, gen_test_vectors.py
 ├── Dockerfile / Dockerfile.esp32 / docker-compose.yml
 └── README-ESP32.md
@@ -143,6 +144,7 @@ make PLATFORM=dabao SCHEME=ml-dsa-44 flash-test
 | `make SCHEME=<s> bin-test` / `bin-bench` | Produce flashable image (ESP: .bin; Dabao: signed .uf2) |
 | `make SCHEME=<s> flash-test` / `flash-bench` | Flash to an ESP32 board / copy to the Dabao's drive |
 | `make bin-all-kem` / `bin-all-sign` | Build all flashable images |
+| `make run-all-bench` | Run every benchmark (Dabao: results in `benchmarks/dabao.csv`) |
 | `make size` | Print ELF sizes |
 | `make V=1 ...` | Verbose build |
 | `make clean` | Remove `build/` |
@@ -175,7 +177,28 @@ file to the board:
 3. Press PROG (or type `boot` on boot1's USB serial console). boot1
    checks the signature and jumps to the image; the result appears on
    PB14.
-4. Press RESET to return to boot1 for the next image.
+4. When the program ends the chip resets into boot1 by itself, ready for
+   the next image (`DABAO_RESET_ON_EXIT=0` to halt instead).
+
+**Running tests and benchmarks.** With the UART adapter connected,
+`run-test` / `run-bench` do all of the above unattended: copy the image,
+start it by sending `boot` to boot1's USB console, capture PB14 until
+`[PASS]`/`[FAIL]`, and save the output next to the image. Benchmark
+results also go into `benchmarks/dabao.csv`, one row per operation
+(min/max/avg cycles at 350 MHz, plus avg in ms, date and git commit):
+
+```bash
+make PLATFORM=dabao SCHEME=ml-dsa-44 run-bench    # build/ml-dsa-44/bench.log + CSV
+make PLATFORM=dabao run-all-bench                 # every scheme, no button presses
+make PLATFORM=dabao run-all-bench BENCH_LABEL=riscv-ntt   # keep variants apart
+make PLATFORM=dabao SCHEME=ml-kem-768 run-test DABAO_UART=/dev/ttyUSB1
+```
+
+Re-running a scheme replaces its rows for the same label. Requires
+pyserial. If boot1's console (USB `1d50:6196`) is not found, the script
+asks for a PROG press instead; `DABAO_BOOT_PORT=` names it explicitly.
+The same parser works on other platforms' output, e.g. QEMU:
+`make SCHEME=ml-dsa-44 run-bench | python3 scripts/bench_to_csv.py - --csv benchmarks/qemu.csv --platform qemu --scheme ml-dsa-44 --unit ticks`.
 
 Things to know:
 
@@ -193,6 +216,9 @@ Things to know:
   newlib (Arch `riscv64-elf-*`, xPack); override with `LIBC_SPECS=`.
 - `randombytes()` is the same non-random fallback as on the other
   platforms; the chip's TRNG is not used.
+- `DABAO_RESET_ON_EXIT=1` relies on boot1's bootwait being enabled, as on
+  new boards. If you disabled it, build with `DABAO_RESET_ON_EXIT=0`, or
+  the image will run in a loop. Changing it needs `make clean`.
 - Nothing on PB14? `audit` on boot1's USB serial console prints a
   `Next stage:` line. `key 3/3 (dev )` ending in `-> 60060400`
   (`-> 60060000` on older boot1) means the image validated, so look at

@@ -299,12 +299,16 @@ $(foreach name,$(SIGN_DIRS),$(eval $(call gen_dsa_scheme,$(name))))
 test:  $(BUILD)/$(SCHEME)/test.elf
 bench: $(BUILD)/$(SCHEME)/bench.elf
 
-run-test: $(BUILD)/$(SCHEME)/test.elf
-	@echo "  QEMU  $<"
+# What the run-* targets hand to qemu_run: the ELF for QEMU, the flashable
+# image for boards that can run tests unattended (mk/dabao.mk sets bin).
+RUN_IMAGE ?= elf
+
+run-test: $(BUILD)/$(SCHEME)/test.$(RUN_IMAGE)
+	@echo "  RUN   $<"
 	$(call qemu_run,$<)
 
-run-bench: $(BUILD)/$(SCHEME)/bench.elf
-	@echo "  QEMU  $<"
+run-bench: $(BUILD)/$(SCHEME)/bench.$(RUN_IMAGE)
+	@echo "  RUN   $<"
 	$(call qemu_run,$<)
 
 # ============================================================
@@ -420,16 +424,24 @@ run-test-montgomery-reduce: $(BUILD)/haetae2/test_montgomery_reduce.elf
 # Run all KEM tests sequentially under QEMU
 # ============================================================
 .PHONY: run-all-sign
-run-all-sign: $(foreach n,$(SIGN_DIRS),$(BUILD)/$(n)/test.elf)
+run-all-sign: $(foreach n,$(SIGN_DIRS),$(BUILD)/$(n)/test.$(RUN_IMAGE))
 	$(foreach n,$(SIGN_DIRS), \
 	    echo "=== $(n) ===" && \
-	    $(call qemu_run,$(BUILD)/$(n)/test.elf) ; )
+	    $(call qemu_run,$(BUILD)/$(n)/test.$(RUN_IMAGE)) ; )
 
 .PHONY: run-all-kem
-run-all-kem: $(foreach n,$(KEM_DIRS),$(BUILD)/$(n)/test.elf)
+run-all-kem: $(foreach n,$(KEM_DIRS),$(BUILD)/$(n)/test.$(RUN_IMAGE))
 	$(foreach n,$(KEM_DIRS), \
 	    echo "=== $(n) ===" && \
-	    $(call qemu_run,$(BUILD)/$(n)/test.elf) ; )
+	    $(call qemu_run,$(BUILD)/$(n)/test.$(RUN_IMAGE)) ; )
+
+# Every scheme's benchmark, one after the other (on the Dabao: unattended,
+# results collected in BENCH_CSV).
+.PHONY: run-all-bench
+run-all-bench: $(foreach n,$(KEM_DIRS) $(SIGN_DIRS),$(BUILD)/$(n)/bench.$(RUN_IMAGE))
+	@$(foreach n,$(KEM_DIRS) $(SIGN_DIRS), \
+	    echo "=== $(n) ===" && \
+	    $(call qemu_run,$(BUILD)/$(n)/bench.$(RUN_IMAGE)) ; )
 
 # ============================================================
 # Size report
@@ -465,6 +477,7 @@ help:
 	@echo "  SCHEME=<name> run-bench          build + run bench under QEMU"
 	@echo "  run-all-kem                      run all KEM tests under QEMU"
 	@echo "  run-all-sign                     run all DSA tests under QEMU"
+	@echo "  run-all-bench                    run every benchmark (Dabao: -> benchmarks/dabao.csv)"
 	@echo "  sign                             build all DSA schemes"
 	@echo "  primitives                       build primitives test ELF"
 	@echo "  run-test-primitives              build + run primitives KAT under QEMU"

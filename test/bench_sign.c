@@ -29,6 +29,18 @@ static void hal_sendf(const char *fmt, ...)
     hal_send_str(buf);
 }
 
+/* Full 64-bit decimal without %llu (not in newlib-nano, used by the ESP
+ * targets). On RV32 "%lu" + (unsigned long) silently drops the top 32 bits,
+ * i.e. anything above 2^32 cycles (12.3 s at 350 MHz). */
+static const char *u64str(uint64_t v)
+{
+    static char s[21];
+    char *p = s + sizeof(s) - 1;
+    *p = '\0';
+    do { *--p = (char)('0' + (v % 10)); v /= 10; } while (v);
+    return p;
+}
+
 #define NITER   20
 #define MSG_LEN 59   /* arbitrary non-power-of-two */
 
@@ -51,6 +63,7 @@ int main(void)
     // uint32_t vf_ntt_calls[NITER], vf_invntt_calls[NITER];
     size_t siglen;
     int i;
+    int sign_failures = 0, verify_failures = 0;
 
     hal_sendf("===========!@!=================");
     hal_sendf("BENCH: %s", CRYPTO_ALGNAME);
@@ -61,8 +74,10 @@ int main(void)
         randombytes(msg, MSG_LEN);
 
         t0 = hal_get_time(); crypto_sign_keypair(pk, sk);           t1 = hal_get_time(); t_kg[i] = t1 - t0;
-        t0 = hal_get_time(); crypto_sign_signature(sig, &siglen, msg, MSG_LEN, NULL, 0, sk); t1 = hal_get_time(); t_sg[i] = t1 - t0;
-        t0 = hal_get_time(); crypto_sign_verify(sig, siglen, msg, MSG_LEN, NULL, 0, pk);    t1 = hal_get_time(); t_vf[i] = t1 - t0;
+        t0 = hal_get_time(); int sr = crypto_sign_signature(sig, &siglen, msg, MSG_LEN, NULL, 0, sk); t1 = hal_get_time(); t_sg[i] = t1 - t0;
+        if (sr != 0) sign_failures++;
+        t0 = hal_get_time(); int vr = crypto_sign_verify(sig, siglen, msg, MSG_LEN, NULL, 0, pk);    t1 = hal_get_time(); t_vf[i] = t1 - t0;
+        if (vr != 0) verify_failures++;
         // mldsa_profile_reset();
         // t0 = hal_get_time();
         // crypto_sign_keypair(pk, sk);
@@ -94,6 +109,9 @@ int main(void)
         // vf_invntt_calls[i] = mldsa_prof_invntt_calls;
     }
 
+    hal_sendf("sign  failures: %d/%d", sign_failures, NITER);
+    hal_sendf("verify failures: %d/%d", verify_failures, NITER);
+
     /* Compute min / max / avg */
     for (int op = 0; op < 3; op++) {
         uint64_t *t = (op == 0) ? t_kg : (op == 1) ? t_sg : t_vf;
@@ -111,9 +129,9 @@ int main(void)
                (unsigned long long)(sum / NITER));
                */
         hal_sendf("%s:", name);
-        hal_sendf("mn=%lu", (unsigned long)mn);
-        hal_sendf("mx=%lu", (unsigned long)mx);
-        hal_sendf("avg=%lu", (unsigned long)(sum/NITER));
+        hal_sendf("mn=%s", u64str(mn));
+        hal_sendf("mx=%s", u64str(mx));
+        hal_sendf("avg=%s", u64str((sum/NITER)));
     }
     // uint64_t sum_vf_ntt = 0;
     // uint64_t sum_vf_invntt = 0;

@@ -74,19 +74,34 @@ int crypto_sign_open(unsigned char *m, size_t *mlen,
 	}
 	if (m != sm)
 	{
-		hal_sendf_debug("==============return -1 fndsa_verify_temp==============");
 		memmove(m, sm, dlen);
 	}
 	*mlen = dlen;
 	return 0;
 }
 
+/* Detached-signature API: unlike crypto_sign()/crypto_sign_open() above,
+ * these write/read only the signature itself (FNDSA_SIGNATURE_SIZE(LOGN)
+ * bytes) into/from sig, never the message. crypto_sign()'s combined
+ * "sm = m || sig" layout needs a buffer of mlen + FNDSA_SIGNATURE_SIZE(LOGN)
+ * bytes; delegating to it here would overflow a sig buffer sized for the
+ * detached signature alone. */
 int crypto_sign_signature(uint8_t *sig, size_t *siglen,
 						  const uint8_t *m, size_t mlen,
 						  const uint8_t *ctx, size_t ctxlen,
 						  const uint8_t *sk)
 {
-	return crypto_sign(sig, siglen, m, mlen, sk);
+	uint8_t seed[40];
+	randombytes(seed, sizeof seed);
+	size_t j = fndsa_sign_seeded(sk, FNDSA_SIGN_KEY_SIZE(LOGN),
+								 ctx, ctxlen, FNDSA_HASH_ID_RAW, m, mlen,
+								 seed, sizeof seed, sig, FNDSA_SIGNATURE_SIZE(LOGN));
+	if (j == 0)
+	{
+		return -1;
+	}
+	*siglen = FNDSA_SIGNATURE_SIZE(LOGN);
+	return 0;
 }
 
 int crypto_sign_verify(const uint8_t *sig, size_t siglen,
@@ -94,5 +109,15 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
 					   const uint8_t *ctx, size_t ctxlen,
 					   const uint8_t *pk)
 {
-	return crypto_sign_open(m, &mlen, sig, siglen, pk);
+	if (siglen != FNDSA_SIGNATURE_SIZE(LOGN))
+	{
+		return -1;
+	}
+	uint8_t tmp[((size_t)4 << LOGN) + 31];
+	if (!fndsa_verify_temp(sig, siglen, pk, FNDSA_VRFY_KEY_SIZE(LOGN),
+						   ctx, ctxlen, FNDSA_HASH_ID_RAW, m, mlen, tmp, sizeof tmp))
+	{
+		return -1;
+	}
+	return 0;
 }

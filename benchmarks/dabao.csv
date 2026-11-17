@@ -1,0 +1,16 @@
+platform,label,scheme,operation,iterations,min,max,avg,unit,avg_ms,date,commit
+dabao,default,fndsa_provisional-1024,keygen,20,376602500,717822276,473094048,cycles,1351.697,2026-11-17,6bb9891-dirty
+dabao,default,fndsa_provisional-1024,sign,20,155659944,156391037,155981997,cycles,445.663,2026-11-17,6bb9891-dirty
+dabao,default,fndsa_provisional-1024,verify,20,2051358,2076548,2067417,cycles,5.907,2026-11-17,6bb9891-dirty
+dabao,default,fndsa_provisional-512,keygen,20,113778841,241911732,151317881,cycles,432.337,2026-11-17,6bb9891-dirty
+dabao,default,fndsa_provisional-512,sign,20,71895026,72365462,72098932,cycles,205.997,2026-11-17,6bb9891-dirty
+dabao,default,fndsa_provisional-512,verify,20,997345,1021018,1012674,cycles,2.893,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-44,keygen,20,23064254,23776376,23417194,cycles,66.906,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-44,sign,20,25377583,170748810,56386194,cycles,161.103,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-44,verify,20,21691635,21695618,21693817,cycles,61.982,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-65,keygen,20,23062657,23775874,23417298,cycles,66.907,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-65,sign,20,25378119,170756499,56386107,cycles,161.103,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-65,verify,20,21691436,21694935,21693632,cycles,61.982,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-87,keygen,20,23058820,23771072,23412038,cycles,66.892,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-87,sign,20,25371204,170614530,56350369,cycles,161.001,2026-11-17,6bb9891-dirty
+dabao,default,ml-dsa-87,verify,20,21686602,21690245,21688218,cycles,61.966,2026-11-17,6bb9891-dirty

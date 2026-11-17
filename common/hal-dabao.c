@@ -13,7 +13,7 @@
  *   • hal_send_str  — UART2 transmit
  *   • hal_get_time  — 64-bit cycle counter (mcycle / mcycleh)
  *   • hal_setup     — make sure UART2 is routed and at DABAO_BAUD
- *   • libc stubs    — _write, _sbrk, _exit, etc.
+ *   • libc stubs    — _write, _sbrk, _exit (which resets back to boot1), etc.
  *   • hal_trap      — fatal trap report, called from startup_dabao.S
  *
  * CONSOLE
@@ -308,16 +308,39 @@ int _kill(int pid, int sig)
     return -1;
 }
 
-/* _exit — print result banner, then spin.
+/* _exit — print result banner, then return to boot1.
  *
  * The test/bench harness returns 0 from main() on PASS, non-zero on FAIL;
- * startup_dabao.S passes that value on. Press RESET to get back to boot1.
+ * startup_dabao.S passes that value on.
+ *
+ * With DABAO_RESET_ON_EXIT (default 1, see mk/dabao.mk) the chip is then
+ * reset the way boot1's own `reset` command does it. With bootwait enabled,
+ * as boards ship, boot1 stays in its loader with the BAOCHIP drive mounted,
+ * ready for the next image: that is what lets `make run-all-bench` go
+ * through every scheme unattended. Build with DABAO_RESET_ON_EXIT=0 if
+ * bootwait is disabled on your board, or the image would run in a loop.
  */
+#ifndef DABAO_RESET_ON_EXIT
+#define DABAO_RESET_ON_EXIT 1
+#endif
+
+#define SYSCTRL_RCURST0    REG32(0x40040080UL)   /* write 0x55AA: system reset */
+
 void _exit(int status)
 {
     hal_send_str(status == 0
         ? "\n========== [PASS] ==========\n"
         : "\n========== [FAIL] ==========\n");
 
+#if DABAO_RESET_ON_EXIT
+    {
+        /* hal_send_str returns once the last byte has left the shifter;
+         * give the receiving adapter ~10 ms before the line glitches. */
+        uint64_t t = hal_get_time();
+        while (hal_get_time() - t < 3500000u)
+            ;
+        SYSCTRL_RCURST0 = 0x55AAu;
+    }
+#endif
     while (1) { }
 }
