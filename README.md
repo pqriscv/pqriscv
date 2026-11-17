@@ -12,11 +12,13 @@ Supported platforms:
 | QEMU virt | RV32IMAC (emulated) | `qemu`      | ✅ (default)  |
 | ESP32-C3  | RV32IMC             | `esp32c3`   | ✅            |
 | ESP32-C6  | RV32IMAC (HP core)  | `esp32c6`   | ✅            |
+| Dabao     | RV32IMAC (Baochip-1x, VexRiscv) | `dabao` | 🧪 new — not yet run on a board |
 | ESP32     | Xtensa LX6          | `esp32`     | 🚧 TODO       |
 
 See [README-ESP32.md](README-ESP32.md) for the ESP32 bare-metal port
 (boot flow, flashing, Docker build environment, watchdog/perf-counter
-details).
+details), and [Dabao (Baochip-1x)](#dabao-baochip-1x) below for the
+Baochip port.
 
 Implemented schemes:
 
@@ -42,11 +44,13 @@ pqriscv/
 │   ├── qemu.mk                # QEMU virt platform flags & run targets
 │   ├── esp32c3.mk             # ESP32-C3 flags, image + flash targets
 │   ├── esp32c6.mk             # ESP32-C6 flags, image + flash targets
+│   ├── dabao.mk               # Baochip-1x Dabao flags, signed UF2 + flash targets
 │   └── esp32.mk               # ESP32 (Xtensa) roadmap
 ├── common/                    # shared library (libcommon.a)
 │   ├── hal.h                  # HAL interface
 │   ├── hal-riscv.c            # QEMU virt HAL (NS16550A UART, time/timeh CSRs)
 │   ├── hal-esp-riscv.c        # ESP32-C3/C6 HAL (UART0, WDTs, perf-counter CSRs)
+│   ├── hal-dabao.c            # Dabao HAL (UDMA UART2, mcycle/mcycleh)
 │   ├── randombytes.h/.c       # RNG (PRNG fallback on QEMU)
 │   ├── fips202.h/.c           # SHA-3 / SHAKE (FIPS 202)
 │   ├── sha2.h/.c              # SHA-256 / SHA-512 (FIPS 180-4)
@@ -55,7 +59,8 @@ pqriscv/
 │   ├── symmetric-shake.c/.h   # SHAKE-based symmetric layer for schemes
 │   ├── riscv/                 # QEMU virt startup + linker script
 │   ├── esp32c3/               # ESP32-C3 startup + linker script
-│   └── esp32c6/               # ESP32-C6 startup + linker script
+│   ├── esp32c6/               # ESP32-C6 startup + linker script
+│   └── dabao/                 # Dabao startup + linker script (execute in place from RRAM)
 ├── crypto_kem/
 │   ├── mlkem/                 # shared ML-KEM sources (+ RV32 Plantard NTT asm)
 │   └── ml-kem-{512,768,1024}/ # per-parameter-set api.h, params.h, Makefile
@@ -70,7 +75,8 @@ pqriscv/
 │   ├── test_sign.c            # signature functional test
 │   ├── bench_sign.c           # signature timing benchmark
 │   └── test_primitives.c      # SHA-3/SHAKE/SHA-2/DRBG self-tests
-├── scripts/                   # flash_esp.sh, monitor.sh, gen_test_vectors.py
+├── scripts/                   # flash_esp.sh, flash_dabao.sh, bao1x_image.py (sign + UF2),
+│                              # monitor.sh, gen_test_vectors.py
 ├── Dockerfile / Dockerfile.esp32 / docker-compose.yml
 └── README-ESP32.md
 ```
@@ -96,6 +102,8 @@ qemu-system-riscv32 --version
 
 For ESP32 targets you additionally need `esptool.py`, or use the
 provided Docker environment (`Dockerfile.esp32`, `docker-compose.yml`).
+For the Dabao you need `python3` (image signing; standard library only)
+and a 3.3 V USB-UART adapter for the console.
 
 > Note: if your shell exports `LDFLAGS=-fuse-ld=mold` (or similar),
 > unset it for cross builds — bare-metal linker scripts require GNU ld.
@@ -104,7 +112,8 @@ provided Docker environment (`Dockerfile.esp32`, `docker-compose.yml`).
 
 ## Build & run
 
-The platform defaults to QEMU; select ESP32 boards with `PLATFORM=`.
+The platform defaults to QEMU; select a board with `PLATFORM=`. Object
+files of all platforms share `build/`, so run `make clean` when switching.
 
 ```bash
 # QEMU virt (default)
@@ -117,6 +126,10 @@ make run-all-sign                     # every signature test sequentially
 make PLATFORM=esp32c6 SCHEME=ml-dsa-44 bin-test
 make PLATFORM=esp32c6 SCHEME=ml-dsa-44 flash-test FLASH_PORT=/dev/ttyUSB0
 ./scripts/monitor.sh /dev/ttyUSB0
+
+# Dabao (real hardware; board in boot1 mode, mounted as the BAOCHIP drive)
+make PLATFORM=dabao SCHEME=ml-dsa-44 flash-test
+./scripts/monitor.sh /dev/ttyUSB0 115200
 ```
 
 | Target | Description |
@@ -127,13 +140,63 @@ make PLATFORM=esp32c6 SCHEME=ml-dsa-44 flash-test FLASH_PORT=/dev/ttyUSB0
 | `make SCHEME=<s> test` / `bench` | Build test/bench ELF for one scheme |
 | `make SCHEME=<s> run-test` / `run-bench` | Build + run under QEMU |
 | `make run-test-primitives` | Run the primitives self-test under QEMU |
-| `make SCHEME=<s> bin-test` / `bin-bench` | Produce flashable ESP image (.bin) |
-| `make SCHEME=<s> flash-test` / `flash-bench` | Flash to an ESP32 board |
+| `make SCHEME=<s> bin-test` / `bin-bench` | Produce flashable image (ESP: .bin; Dabao: signed .uf2) |
+| `make SCHEME=<s> flash-test` / `flash-bench` | Flash to an ESP32 board / copy to the Dabao's drive |
 | `make bin-all-kem` / `bin-all-sign` | Build all flashable images |
 | `make size` | Print ELF sizes |
 | `make V=1 ...` | Verbose build |
 | `make clean` | Remove `build/` |
 | `make help` | Show quick-start help |
+
+---
+
+## Dabao (Baochip-1x)
+
+The [Dabao](https://github.com/baochip/dabao) carries a Baochip-1x: a
+VexRiscv RV32IMAC at 350 MHz with 2 MiB of SRAM and 4 MiB of RRAM. Code
+runs in place from RRAM; `.data`, `.bss`, heap and stack live in SRAM.
+
+**Console.** The board has no USB-UART bridge and its USB port goes quiet
+once boot1 hands over, so output is on UART2: connect a 3.3 V adapter's RX
+to **PB14** (header pin 15) and GND to GND (PB13, pin 16, is the board's
+RX and is unused). The default is 115200 baud, 8N1 (`DABAO_BAUD=` to
+change); boot1's own messages on the same pin are at 1 000 000 baud and
+appear as a short burst of noise before the test output.
+
+**Flashing.** boot1 only starts signed images. `bin-test` signs the image
+with Baochip's published developer key and wraps it as UF2
+(`scripts/bao1x_image.py`, no dependencies); `flash-test` copies that
+file to the board:
+
+1. Put the board in boot1 mode — it ships that way; otherwise hold PROG
+   and press RESET. It mounts as a USB drive labelled `BAOCHIP`.
+2. `make PLATFORM=dabao SCHEME=ml-kem-768 flash-test`
+   (add `DABAO_MOUNT=/path` if the drive is not found automatically).
+3. Press PROG (or type `boot` on boot1's USB serial console). boot1
+   checks the signature and jumps to the image; the result appears on
+   PB14.
+4. Press RESET to return to boot1 for the next image.
+
+Things to know:
+
+- **Developer key.** The first developer-signed image a board boots makes
+  boot1 erase the factory-provisioned secrets and flag the chip as a
+  developer device. This cannot be undone and is the intended route for
+  bare-metal code — but do not do it to a board whose keys you care about.
+- Images carry the classical Ed25519ph signature only. boot1 accepts that
+  unless the chip's `require-pq` one-way counter has been set (off by
+  default), in which case it also demands an SLH-DSA signature.
+- The image works with both entry conventions: boot1 before xous-core
+  v0.10.2 enters through the signature block's trampoline, v0.10.2 and
+  later jump to image + 0x400. See `common/dabao/dabao.ld`.
+- The C library is picolibc when the toolchain has it, otherwise full
+  newlib (Arch `riscv64-elf-*`, xPack); override with `LIBC_SPECS=`.
+- `randombytes()` is the same non-random fallback as on the other
+  platforms; the chip's TRNG is not used.
+- Nothing on PB14? `audit` on boot1's USB serial console prints a
+  `Next stage:` line. `key 3/3 (dev )` ending in `-> 60060400`
+  (`-> 60060000` on older boot1) means the image validated, so look at
+  the UART wiring and baud rate; `did not validate` means it never ran.
 
 ---
 
@@ -183,6 +246,9 @@ Timers:
   implemented; the HAL uses Espressif's custom perf-counter CSRs
   (MPCER/MPCMR/MPCCR) to count cycles. The counter is 32-bit, so
   deltas are computed in `uint32_t`.
+- **Dabao**: the standard `mcycle`/`mcycleh` CSRs — a 64-bit count of
+  CPU cycles (350 MHz). `CLOCK_FAST` and `CLOCK_BENCHMARK` are the same:
+  the clock is left as boot1 configured it.
 
 ---
 
