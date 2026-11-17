@@ -12,7 +12,7 @@ Supported platforms:
 | QEMU virt | RV32IMAC (emulated) | `qemu`      | ✅ (default)  |
 | ESP32-C3  | RV32IMC             | `esp32c3`   | ✅            |
 | ESP32-C6  | RV32IMAC (HP core)  | `esp32c6`   | ✅            |
-| Dabao     | RV32IMAC (Baochip-1x, VexRiscv) | `dabao` | 🧪 new — not yet run on a board |
+| Dabao     | RV32IMAC (Baochip-1x, VexRiscv) | `dabao` | ✅ |
 | ESP32     | Xtensa LX6          | `esp32`     | 🚧 TODO       |
 
 See [README-ESP32.md](README-ESP32.md) for the ESP32 bare-metal port
