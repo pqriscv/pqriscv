@@ -1,0 +1,655 @@
+diff --git a/Makefile b/Makefile
+index e04c2c1..8c0e69d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -299,12 +299,16 @@ $(foreach name,$(SIGN_DIRS),$(eval $(call gen_dsa_scheme,$(name))))
+ test:  $(BUILD)/$(SCHEME)/test.elf
+ bench: $(BUILD)/$(SCHEME)/bench.elf
+ 
+-run-test: $(BUILD)/$(SCHEME)/test.elf
+-	@echo "  QEMU  $<"
++# What the run-* targets hand to qemu_run: the ELF for QEMU, the flashable
++# image for boards that can run tests unattended (mk/dabao.mk sets bin).
++RUN_IMAGE ?= elf
++
++run-test: $(BUILD)/$(SCHEME)/test.$(RUN_IMAGE)
++	@echo "  RUN   $<"
+ 	$(call qemu_run,$<)
+ 
+-run-bench: $(BUILD)/$(SCHEME)/bench.elf
+-	@echo "  QEMU  $<"
++run-bench: $(BUILD)/$(SCHEME)/bench.$(RUN_IMAGE)
++	@echo "  RUN   $<"
+ 	$(call qemu_run,$<)
+ 
+ # ============================================================
+@@ -420,16 +424,24 @@ run-test-montgomery-reduce: $(BUILD)/haetae2/test_montgomery_reduce.elf
+ # Run all KEM tests sequentially under QEMU
+ # ============================================================
+ .PHONY: run-all-sign
+-run-all-sign: $(foreach n,$(SIGN_DIRS),$(BUILD)/$(n)/test.elf)
++run-all-sign: $(foreach n,$(SIGN_DIRS),$(BUILD)/$(n)/test.$(RUN_IMAGE))
+ 	$(foreach n,$(SIGN_DIRS), \
+ 	    echo "=== $(n) ===" && \
+-	    $(call qemu_run,$(BUILD)/$(n)/test.elf) ; )
++	    $(call qemu_run,$(BUILD)/$(n)/test.$(RUN_IMAGE)) ; )
+ 
+ .PHONY: run-all-kem
+-run-all-kem: $(foreach n,$(KEM_DIRS),$(BUILD)/$(n)/test.elf)
++run-all-kem: $(foreach n,$(KEM_DIRS),$(BUILD)/$(n)/test.$(RUN_IMAGE))
+ 	$(foreach n,$(KEM_DIRS), \
+ 	    echo "=== $(n) ===" && \
+-	    $(call qemu_run,$(BUILD)/$(n)/test.elf) ; )
++	    $(call qemu_run,$(BUILD)/$(n)/test.$(RUN_IMAGE)) ; )
++
++# Every scheme's benchmark, one after the other (on the Dabao: unattended,
++# results collected in BENCH_CSV).
++.PHONY: run-all-bench
++run-all-bench: $(foreach n,$(KEM_DIRS) $(SIGN_DIRS),$(BUILD)/$(n)/bench.$(RUN_IMAGE))
++	@$(foreach n,$(KEM_DIRS) $(SIGN_DIRS), \
++	    echo "=== $(n) ===" && \
++	    $(call qemu_run,$(BUILD)/$(n)/bench.$(RUN_IMAGE)) ; )
+ 
+ # ============================================================
+ # Size report
+@@ -465,6 +477,7 @@ help:
+ 	@echo "  SCHEME=<name> run-bench          build + run bench under QEMU"
+ 	@echo "  run-all-kem                      run all KEM tests under QEMU"
+ 	@echo "  run-all-sign                     run all DSA tests under QEMU"
++	@echo "  run-all-bench                    run every benchmark (Dabao: -> benchmarks/dabao.csv)"
+ 	@echo "  sign                             build all DSA schemes"
+ 	@echo "  primitives                       build primitives test ELF"
+ 	@echo "  run-test-primitives              build + run primitives KAT under QEMU"
+diff --git a/README.md b/README.md
+index 0f2727c..451973a 100644
+--- a/README.md
++++ b/README.md
+@@ -76,6 +76,7 @@ pqriscv/
+ │   ├── bench_sign.c           # signature timing benchmark
+ │   └── test_primitives.c      # SHA-3/SHAKE/SHA-2/DRBG self-tests
+ ├── scripts/                   # flash_esp.sh, flash_dabao.sh, bao1x_image.py (sign + UF2),
++│                              # run_dabao.py (flash + run + capture), bench_to_csv.py,
+ │                              # monitor.sh, gen_test_vectors.py
+ ├── Dockerfile / Dockerfile.esp32 / docker-compose.yml
+ └── README-ESP32.md
+@@ -143,6 +144,7 @@ make PLATFORM=dabao SCHEME=ml-dsa-44 flash-test
+ | `make SCHEME=<s> bin-test` / `bin-bench` | Produce flashable image (ESP: .bin; Dabao: signed .uf2) |
+ | `make SCHEME=<s> flash-test` / `flash-bench` | Flash to an ESP32 board / copy to the Dabao's drive |
+ | `make bin-all-kem` / `bin-all-sign` | Build all flashable images |
++| `make run-all-bench` | Run every benchmark (Dabao: results in `benchmarks/dabao.csv`) |
+ | `make size` | Print ELF sizes |
+ | `make V=1 ...` | Verbose build |
+ | `make clean` | Remove `build/` |
+@@ -175,7 +177,28 @@ file to the board:
+ 3. Press PROG (or type `boot` on boot1's USB serial console). boot1
+    checks the signature and jumps to the image; the result appears on
+    PB14.
+-4. Press RESET to return to boot1 for the next image.
++4. When the program ends the chip resets into boot1 by itself, ready for
++   the next image (`DABAO_RESET_ON_EXIT=0` to halt instead).
++
++**Running tests and benchmarks.** With the UART adapter connected,
++`run-test` / `run-bench` do all of the above unattended: copy the image,
++start it by sending `boot` to boot1's USB console, capture PB14 until
++`[PASS]`/`[FAIL]`, and save the output next to the image. Benchmark
++results also go into `benchmarks/dabao.csv`, one row per operation
++(min/max/avg cycles at 350 MHz, plus avg in ms, date and git commit):
++
++```bash
++make PLATFORM=dabao SCHEME=ml-dsa-44 run-bench    # build/ml-dsa-44/bench.log + CSV
++make PLATFORM=dabao run-all-bench                 # every scheme, no button presses
++make PLATFORM=dabao run-all-bench BENCH_LABEL=riscv-ntt   # keep variants apart
++make PLATFORM=dabao SCHEME=ml-kem-768 run-test DABAO_UART=/dev/ttyUSB1
++```
++
++Re-running a scheme replaces its rows for the same label. Requires
++pyserial. If boot1's console (USB `1d50:6196`) is not found, the script
++asks for a PROG press instead; `DABAO_BOOT_PORT=` names it explicitly.
++The same parser works on other platforms' output, e.g. QEMU:
++`make SCHEME=ml-dsa-44 run-bench | python3 scripts/bench_to_csv.py - --csv benchmarks/qemu.csv --platform qemu --scheme ml-dsa-44 --unit ticks`.
+ 
+ Things to know:
+ 
+@@ -193,6 +216,9 @@ Things to know:
+   newlib (Arch `riscv64-elf-*`, xPack); override with `LIBC_SPECS=`.
+ - `randombytes()` is the same non-random fallback as on the other
+   platforms; the chip's TRNG is not used.
++- `DABAO_RESET_ON_EXIT=1` relies on boot1's bootwait being enabled, as on
++  new boards. If you disabled it, build with `DABAO_RESET_ON_EXIT=0`, or
++  the image will run in a loop. Changing it needs `make clean`.
+ - Nothing on PB14? `audit` on boot1's USB serial console prints a
+   `Next stage:` line. `key 3/3 (dev )` ending in `-> 60060400`
+   (`-> 60060000` on older boot1) means the image validated, so look at
+diff --git a/common/hal-dabao.c b/common/hal-dabao.c
+index 237575b..f960b40 100644
+--- a/common/hal-dabao.c
++++ b/common/hal-dabao.c
+@@ -13,7 +13,7 @@
+  *   • hal_send_str  — UART2 transmit
+  *   • hal_get_time  — 64-bit cycle counter (mcycle / mcycleh)
+  *   • hal_setup     — make sure UART2 is routed and at DABAO_BAUD
+- *   • libc stubs    — _write, _sbrk, _exit, etc.
++ *   • libc stubs    — _write, _sbrk, _exit (which resets back to boot1), etc.
+  *   • hal_trap      — fatal trap report, called from startup_dabao.S
+  *
+  * CONSOLE
+@@ -308,16 +308,39 @@ int _kill(int pid, int sig)
+     return -1;
+ }
+ 
+-/* _exit — print result banner, then spin.
++/* _exit — print result banner, then return to boot1.
+  *
+  * The test/bench harness returns 0 from main() on PASS, non-zero on FAIL;
+- * startup_dabao.S passes that value on. Press RESET to get back to boot1.
++ * startup_dabao.S passes that value on.
++ *
++ * With DABAO_RESET_ON_EXIT (default 1, see mk/dabao.mk) the chip is then
++ * reset the way boot1's own `reset` command does it. With bootwait enabled,
++ * as boards ship, boot1 stays in its loader with the BAOCHIP drive mounted,
++ * ready for the next image: that is what lets `make run-all-bench` go
++ * through every scheme unattended. Build with DABAO_RESET_ON_EXIT=0 if
++ * bootwait is disabled on your board, or the image would run in a loop.
+  */
++#ifndef DABAO_RESET_ON_EXIT
++#define DABAO_RESET_ON_EXIT 1
++#endif
++
++#define SYSCTRL_RCURST0    REG32(0x40040080UL)   /* write 0x55AA: system reset */
++
+ void _exit(int status)
+ {
+     hal_send_str(status == 0
+         ? "\n========== [PASS] ==========\n"
+         : "\n========== [FAIL] ==========\n");
+ 
++#if DABAO_RESET_ON_EXIT
++    {
++        /* hal_send_str returns once the last byte has left the shifter;
++         * give the receiving adapter ~10 ms before the line glitches. */
++        uint64_t t = hal_get_time();
++        while (hal_get_time() - t < 3500000u)
++            ;
++        SYSCTRL_RCURST0 = 0x55AAu;
++    }
++#endif
+     while (1) { }
+ }
+diff --git a/mk/dabao.mk b/mk/dabao.mk
+index 82c215b..1a1d021 100644
+--- a/mk/dabao.mk
++++ b/mk/dabao.mk
+@@ -19,6 +19,7 @@
+ # Flash:   make PLATFORM=dabao SCHEME=ml-kem-768 flash-test
+ #          (board in boot1 mode, mounted as the BAOCHIP drive; then press PROG)
+ # Monitor: scripts/monitor.sh /dev/ttyUSB0 115200
++# Bench:   make PLATFORM=dabao SCHEME=ml-kem-768 run-bench   → benchmarks/dabao.csv
+ #          (3.3 V USB-UART adapter: adapter RX ← PB14, GND ↔ GND)
+ # ─────────────────────────────────────────────────────────────────────────────
+ 
+@@ -38,13 +39,20 @@ LIBC_SPECS ?= $(shell $(CC) --specs=picolibc.specs -E -x c /dev/null >/dev/null
+ # Console baud rate on PB14 (boot1's own messages there are at 1 Mbaud).
+ DABAO_BAUD ?= 115200
+ 
++# 1: after main() returns, reset into boot1 so the next image can be flashed
++#    without touching the board (needs bootwait enabled — the factory default).
++# 0: stay halted; press RESET by hand. Use this if bootwait is disabled.
++# Changing it needs `make clean`.
++DABAO_RESET_ON_EXIT ?= 1
++
+ PLATFORM_CFLAGS := \
+     $(LIBC_SPECS)          \
+     $(ARCH_FLAGS)          \
+     -Icommon               \
+     -Icommon/dabao         \
+     -DDABAO                \
+-    -DDABAO_BAUD=$(DABAO_BAUD)
++    -DDABAO_BAUD=$(DABAO_BAUD)    \
++    -DDABAO_RESET_ON_EXIT=$(DABAO_RESET_ON_EXIT)
+ 
+ PLATFORM_LDFLAGS := \
+     -fuse-ld=bfd                    \
+@@ -86,5 +94,27 @@ define flash_bin
+ 	$(Q)scripts/flash_dabao.sh $(1:.bin=.uf2) $(DABAO_MOUNT)
+ endef
+ 
+-# No QEMU on hardware targets
+-qemu_run = @echo "  SKIP  QEMU run (hardware target). Use 'flash-test' instead."
++# ── run-test / run-bench on the board ───────────────────────────────────────
++# scripts/run_dabao.py copies the .uf2 to the BAOCHIP drive, sends `boot` to
++# boot1's USB console (no PROG press needed), captures PB14 on DABAO_UART
++# until [PASS]/[FAIL], and saves build/<scheme>/<image>.log. For bench images
++# scripts/bench_to_csv.py then adds the numbers to BENCH_CSV.
++#
++#   make PLATFORM=dabao SCHEME=ml-dsa-44 run-bench
++#   make PLATFORM=dabao run-all-bench BENCH_LABEL=riscv-ntt
++DABAO_UART    ?= /dev/ttyUSB0
++# boot1's USB console; found by USB ID 1d50:6196 when empty
++DABAO_BOOT_PORT ?=
++DABAO_TIMEOUT ?= 1800
++BENCH_CSV     ?= benchmarks/dabao.csv
++BENCH_LABEL   ?= default
++RUN_IMAGE     := bin
++
++# qemu_run(bin_path) — name kept so the generic run-* targets work unchanged
++qemu_run = $(PYTHON) scripts/run_dabao.py $(1:.bin=.uf2) \
++    --uart $(DABAO_UART) --baud $(DABAO_BAUD) --timeout $(DABAO_TIMEOUT) \
++    $(if $(DABAO_MOUNT),--mount $(DABAO_MOUNT)) \
++    $(if $(DABAO_BOOT_PORT),--boot-port $(DABAO_BOOT_PORT)) --log $(1:.bin=.log) \
++    $(if $(filter bench.bin,$(notdir $(1))), \
++      && $(PYTHON) scripts/bench_to_csv.py $(1:.bin=.log) --csv $(BENCH_CSV) \
++         --platform dabao --label "$(BENCH_LABEL)" --unit cycles --mhz 350)
+diff --git a/scripts/bench_to_csv.py b/scripts/bench_to_csv.py
+new file mode 100755
+index 0000000..17b5d40
+--- /dev/null
++++ b/scripts/bench_to_csv.py
+@@ -0,0 +1,127 @@
++#!/usr/bin/env python3
++"""scripts/bench_to_csv.py — turn bench output into rows of a CSV file.
++
++Reads what test/bench_kem.c and test/bench_sign.c print, from a log file or
++stdin, so it works for any platform:
++
++    make PLATFORM=dabao SCHEME=ml-dsa-44 run-bench          # calls this itself
++    make SCHEME=ml-dsa-44 run-bench | python3 scripts/bench_to_csv.py - \\
++        --csv benchmarks/qemu.csv --platform qemu --unit ticks
++
++One row per operation (keygen / enc / dec, or keygen / sign / verify):
++
++    platform,label,scheme,operation,iterations,min,max,avg,unit,avg_ms,date,commit
++
++A row with the same platform, label, scheme and operation is replaced, so
++re-running a benchmark updates it; use --label to keep variants apart
++(e.g. "c" vs "riscv-ntt", like the hand-made benchmarks.csv).
++"""
++
++import argparse
++import csv
++import datetime
++import os
++import re
++import subprocess
++import sys
++
++FIELDS = ["platform", "label", "scheme", "operation", "iterations",
++          "min", "max", "avg", "unit", "avg_ms", "date", "commit"]
++OP_ORDER = {"keygen": 0, "enc": 1, "sign": 1, "dec": 2, "verify": 2}
++
++
++def parse(lines):
++    """-> (algorithm name, iterations, {op: {"min","max","avg"}})"""
++    alg, iters, ops, current = None, None, {}, None
++    for raw in lines:
++        line = raw.strip()
++        m = re.match(r"BENCH:\s*(.+)$", line)
++        if m:
++            alg = m.group(1).strip()
++            continue
++        m = re.match(r"(?:iterations|iters):\s*(\d+)", line)
++        if m:
++            iters = int(m.group(1))
++            continue
++        # bench_kem.c:  "keygen_min: 123"
++        m = re.match(r"(keygen|enc|dec|sign|verify)_(min|max|avg):\s*(\d+)$", line)
++        if m:
++            ops.setdefault(m.group(1), {})[m.group(2)] = int(m.group(3))
++            continue
++        # bench_sign.c: "keygen:" then "mn=123" / "mx=123" / "avg=123"
++        m = re.match(r"(keygen|enc|dec|sign|verify)\s*:$", line)
++        if m:
++            current = m.group(1)
++            continue
++        m = re.match(r"(mn|mx|avg)=(\d+)$", line)
++        if m and current:
++            key = {"mn": "min", "mx": "max", "avg": "avg"}[m.group(1)]
++            ops.setdefault(current, {})[key] = int(m.group(2))
++    ops = {k: v for k, v in ops.items() if len(v) == 3}
++    return alg, iters, ops
++
++
++def git_commit():
++    try:
++        h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
++                           text=True, check=True).stdout.strip()
++        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
++                               capture_output=True, text=True).stdout.strip()
++        return h + ("-dirty" if dirty else "")
++    except (OSError, subprocess.CalledProcessError):
++        return ""
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
++    ap.add_argument("log", help="bench output, or - for stdin")
++    ap.add_argument("--csv", required=True)
++    ap.add_argument("--platform", required=True)
++    ap.add_argument("--scheme", help="default: the directory of the log file")
++    ap.add_argument("--label", default="default")
++    ap.add_argument("--unit", default="cycles")
++    ap.add_argument("--mhz", type=float, help="clock in MHz, to fill avg_ms")
++    a = ap.parse_args()
++
++    if a.log == "-":
++        lines = sys.stdin.read().splitlines()
++        print("\n".join(lines))         # keep the output visible when piped
++    else:
++        with open(a.log, errors="replace") as f:
++            lines = f.read().splitlines()
++
++    alg, iters, ops = parse(lines)
++    if not ops:
++        sys.exit(f"bench_to_csv: no benchmark results found in {a.log}")
++    scheme = a.scheme or (os.path.basename(os.path.dirname(os.path.abspath(a.log)))
++                          if a.log != "-" else (alg or "unknown"))
++
++    rows = []
++    if os.path.exists(a.csv):
++        with open(a.csv, newline="") as f:
++            rows = [r for r in csv.DictReader(f)
++                    if not (r["platform"] == a.platform and r["label"] == a.label
++                            and r["scheme"] == scheme and r["operation"] in ops)]
++
++    date, commit = datetime.date.today().isoformat(), git_commit()
++    for op, v in ops.items():
++        avg_ms = f"{v['avg'] / (a.mhz * 1000):.3f}" if a.mhz else ""
++        rows.append(dict(platform=a.platform, label=a.label, scheme=scheme, operation=op,
++                         iterations=iters or "", min=v["min"], max=v["max"], avg=v["avg"],
++                         unit=a.unit, avg_ms=avg_ms, date=date, commit=commit))
++
++    rows.sort(key=lambda r: (r["platform"], r["label"], r["scheme"],
++                             OP_ORDER.get(r["operation"], 9), r["operation"]))
++    os.makedirs(os.path.dirname(a.csv) or ".", exist_ok=True)
++    with open(a.csv, "w", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=FIELDS)
++        w.writeheader()
++        w.writerows(rows)
++
++    print(f"[bench_to_csv] {scheme} ({alg}): "
++          + ", ".join(f"{op} avg {v['avg']}" for op, v in ops.items())
++          + f" {a.unit} -> {a.csv}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/flash_dabao.sh b/scripts/flash_dabao.sh
+index 79afb34..a8cbf75 100755
+--- a/scripts/flash_dabao.sh
++++ b/scripts/flash_dabao.sh
+@@ -60,4 +60,5 @@ echo "  1. start the monitor on the UART adapter (PB14 → adapter RX):"
+ echo "       ./scripts/monitor.sh /dev/ttyUSB0 115200"
+ echo "  2. press PROG on the board (or type 'boot' on boot1's USB console)"
+ echo "     to verify and run the image."
+-echo "Press RESET afterwards to return to boot1 for the next image."
++echo "Or let make do all of it: make PLATFORM=dabao SCHEME=<s> run-bench"
++echo "When it finishes the board resets into boot1 by itself (DABAO_RESET_ON_EXIT=1)."
+diff --git a/scripts/run_dabao.py b/scripts/run_dabao.py
+new file mode 100755
+index 0000000..b0e7a36
+--- /dev/null
++++ b/scripts/run_dabao.py
+@@ -0,0 +1,178 @@
++#!/usr/bin/env python3
++"""scripts/run_dabao.py — flash a pqriscv image to a Dabao, run it, capture the result.
++
++Usage (normally through make, see mk/dabao.mk):
++    run_dabao.py build/ml-dsa-44/bench.uf2 --uart /dev/ttyUSB0 --log build/ml-dsa-44/bench.log
++
++Steps:
++  1. wait for boot1's mass-storage drive (label BAOCHIP)
++  2. open the UART adapter on PB14
++  3. copy the .uf2 onto the drive and sync
++  4. start it: send `boot` to boot1's USB serial console (USB 1d50:6196);
++     if that console cannot be found, ask for a PROG press instead
++  5. echo the UART output until [PASS], [FAIL] or !TRAP, and save it
++
++Exit status: 0 PASS, 1 FAIL or trap, 2 timeout / setup error.
++
++With DABAO_RESET_ON_EXIT=1 (the default) the image resets into boot1 after
++printing its result, so the drive comes back by itself for the next run.
++
++Needs pyserial (pip install pyserial / python3-serial), as scripts/monitor.sh.
++"""
++
++import argparse
++import os
++import shutil
++import subprocess
++import sys
++import time
++
++try:
++    import serial
++    import serial.tools.list_ports
++except ImportError:
++    sys.exit("run_dabao: pyserial is missing (pip install pyserial or python3-serial)")
++
++LABEL = "BAOCHIP"
++BOOT1_VID, BOOT1_PID = 0x1D50, 0x6196
++DONE = ("[PASS]", "[FAIL]", "!TRAP")
++
++
++def log(msg):
++    print(f"[run_dabao] {msg}", flush=True)
++
++
++def _findmnt():
++    try:
++        out = subprocess.run(["findmnt", "-rn", "-S", f"LABEL={LABEL}", "-o", "TARGET"],
++                             capture_output=True, text=True).stdout
++    except FileNotFoundError:
++        return ""
++    return out.split("\n")[0].strip().replace("\\x20", " ")
++
++
++def find_mount():
++    m = _findmnt()
++    dev = f"/dev/disk/by-label/{LABEL}"
++    if not m and os.path.exists(dev) and shutil.which("udisksctl"):
++        subprocess.run(["udisksctl", "mount", "-b", dev], capture_output=True)
++        m = _findmnt()
++    return m
++
++
++def wait_mount(fixed, timeout):
++    if fixed:
++        if not os.path.isdir(fixed):
++            sys.exit(f"run_dabao: {fixed} is not a directory")
++        return fixed
++    t0, asked = time.time(), False
++    while time.time() - t0 < timeout:
++        m = find_mount()
++        if m and os.path.isdir(m):
++            return m
++        if not asked and time.time() - t0 > 5:
++            log(f"waiting for the {LABEL} drive — press RESET on the board "
++                "(hold PROG while pressing it if bootwait is disabled)")
++            asked = True
++        time.sleep(0.5)
++    log(f"no {LABEL} drive after {timeout:.0f} s")
++    sys.exit(2)
++
++
++def find_boot1_port(fixed):
++    if fixed:
++        return fixed
++    for p in serial.tools.list_ports.comports():
++        if p.vid == BOOT1_VID and p.pid == BOOT1_PID:
++            return p.device
++    return None
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
++    ap.add_argument("uf2")
++    ap.add_argument("--uart", default="/dev/ttyUSB0", help="USB-UART adapter wired to PB14")
++    ap.add_argument("--baud", type=int, default=115200)
++    ap.add_argument("--mount", help="mount point of the BAOCHIP drive (default: by label)")
++    ap.add_argument("--boot-port", help="boot1 USB console (default: USB 1d50:6196)")
++    ap.add_argument("--log", help="write the captured UART output here")
++    ap.add_argument("--timeout", type=float, default=1800, help="seconds to wait for a result")
++    ap.add_argument("--drive-timeout", type=float, default=120)
++    a = ap.parse_args()
++
++    if not os.path.isfile(a.uf2):
++        sys.exit(f"run_dabao: {a.uf2} not found")
++
++    mnt = wait_mount(a.mount, a.drive_timeout)
++    try:
++        uart = serial.Serial(a.uart, a.baud, timeout=0.2)
++    except serial.SerialException as e:
++        sys.exit(f"run_dabao: cannot open {a.uart}: {e}")
++
++    # the console must be found before the copy: boot1 keeps it while the drive is up
++    boot_port = find_boot1_port(a.boot_port)
++
++    log(f"{a.uf2} -> {mnt}")
++    dst = os.path.join(mnt, os.path.basename(a.uf2))
++    with open(a.uf2, "rb") as src, open(dst, "wb") as out:
++        shutil.copyfileobj(src, out)
++        out.flush()
++        os.fsync(out.fileno())
++    os.sync()
++    time.sleep(1.0)                 # let boot1 commit the last RRAM page
++
++    uart.reset_input_buffer()
++    started = False
++    if boot_port:
++        try:
++            con = serial.Serial(boot_port, 115200, timeout=0.5)
++        except (serial.SerialException, OSError) as e:
++            log(f"could not open {boot_port} ({e})")
++        else:
++            try:
++                con.write(b"\rboot\r")
++                con.flush()
++            except (serial.SerialException, OSError):
++                pass        # boot1 drops USB as it hands over: expected
++            try:
++                con.close()
++            except (serial.SerialException, OSError):
++                pass
++            started = True
++            log(f"sent 'boot' on {boot_port}")
++    if not started:
++        log("boot1 USB console not found — press PROG on the board now")
++
++    captured, line, t0, status = [], b"", time.time(), 2
++    while time.time() - t0 < a.timeout:
++        chunk = uart.read(256)
++        if not chunk:
++            continue
++        for b in chunk:
++            if b == 0x0A:
++                text = line.decode("ascii", errors="ignore").rstrip("\r")
++                # boot1 talks at 1 Mbaud on the same pin: drop the noise it makes
++                text = "".join(c for c in text if c.isprintable())
++                line = b""
++                captured.append(text)
++                print(text, flush=True)
++                if any(d in text for d in DONE):
++                    status = 0 if "[PASS]" in text else 1
++            else:
++                line += bytes([b])
++        if status != 2:
++            break
++    else:
++        log(f"no [PASS]/[FAIL] within {a.timeout:.0f} s")
++    uart.close()
++
++    if a.log:
++        os.makedirs(os.path.dirname(a.log) or ".", exist_ok=True)
++        with open(a.log, "w") as f:
++            f.write("\n".join(captured) + "\n")
++        log(f"output saved to {a.log}")
++    sys.exit(status)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/test/bench_kem.c b/test/bench_kem.c
+index e6c387c..8159c20 100644
+--- a/test/bench_kem.c
++++ b/test/bench_kem.c
+@@ -46,6 +46,18 @@ static void pf(const char *fmt, ...)
+     hal_send_str(_buf);
+ }
+ 
++/* Full 64-bit decimal without %llu (not in newlib-nano, used by the ESP
++ * targets). On RV32 "%lu" + (unsigned long) silently drops the top 32 bits,
++ * i.e. anything above 2^32 cycles (12.3 s at 350 MHz). */
++static const char *u64str(uint64_t v)
++{
++    static char s[21];
++    char *p = s + sizeof(s) - 1;
++    *p = '\0';
++    do { *--p = (char)('0' + (v % 10)); v /= 10; } while (v);
++    return p;
++}
++
+ static uint64_t min_u64(uint64_t a, uint64_t b) { return a < b ? a : b; }
+ static uint64_t max_u64(uint64_t a, uint64_t b) { return a > b ? a : b; }
+ 
+@@ -106,17 +118,17 @@ int main(void)
+         t_de_sum += dt;
+     }
+ 
+-    pf("keygen_min: %lu", (unsigned long )t_kg_min);
+-    pf("keygen_max: %lu", (unsigned long )t_kg_max);
+-    pf("keygen_avg: %lu", (unsigned long )(t_kg_sum / NBENCH));
++    pf("keygen_min: %s", u64str(t_kg_min));
++    pf("keygen_max: %s", u64str(t_kg_max));
++    pf("keygen_avg: %s", u64str((t_kg_sum / NBENCH)));
+ 
+-    pf("enc_min:    %lu", (unsigned long )t_en_min);
+-    pf("enc_max:    %lu", (unsigned long ) t_en_max);
+-    pf("enc_avg:    %lu", (unsigned long )(t_en_sum / NBENCH));
++    pf("enc_min:    %s", u64str(t_en_min));
++    pf("enc_max:    %s", u64str(t_en_max));
++    pf("enc_avg:    %s", u64str((t_en_sum / NBENCH)));
+ 
+-    pf("dec_min:    %lu", (unsigned long )t_de_min);
+-    pf("dec_max:    %lu", (unsigned long )t_de_max);
+-    pf("dec_avg:    %lu", (unsigned long )(t_de_sum / NBENCH));
++    pf("dec_min:    %s", u64str(t_de_min));
++    pf("dec_max:    %s", u64str(t_de_max));
++    pf("dec_avg:    %s", u64str((t_de_sum / NBENCH)));
+ 
+     
+ 
+diff --git a/test/bench_sign.c b/test/bench_sign.c
+index 0321ff9..639e678 100644
+--- a/test/bench_sign.c
++++ b/test/bench_sign.c
+@@ -29,6 +29,18 @@ static void hal_sendf(const char *fmt, ...)
+     hal_send_str(buf);
+ }
+ 
++/* Full 64-bit decimal without %llu (not in newlib-nano, used by the ESP
++ * targets). On RV32 "%lu" + (unsigned long) silently drops the top 32 bits,
++ * i.e. anything above 2^32 cycles (12.3 s at 350 MHz). */
++static const char *u64str(uint64_t v)
++{
++    static char s[21];
++    char *p = s + sizeof(s) - 1;
++    *p = '\0';
++    do { *--p = (char)('0' + (v % 10)); v /= 10; } while (v);
++    return p;
++}
++
+ #define NITER   20
+ #define MSG_LEN 59   /* arbitrary non-power-of-two */
+ 
+@@ -111,9 +123,9 @@ int main(void)
+                (unsigned long long)(sum / NITER));
+                */
+         hal_sendf("%s:", name);
+-        hal_sendf("mn=%lu", (unsigned long)mn);
+-        hal_sendf("mx=%lu", (unsigned long)mx);
+-        hal_sendf("avg=%lu", (unsigned long)(sum/NITER));
++        hal_sendf("mn=%s", u64str(mn));
++        hal_sendf("mx=%s", u64str(mx));
++        hal_sendf("avg=%s", u64str((sum/NITER)));
+     }
+     // uint64_t sum_vf_ntt = 0;
+     // uint64_t sum_vf_invntt = 0;
